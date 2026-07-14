@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>♫ FNF · QWOP rhythm</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(145deg, #0b0c1a 0%, #1a1f33 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    .game-wrapper {
+      background: #21263f;
+      padding: 1.8rem 2.2rem 2.2rem 2.2rem;
+      border-radius: 4rem 4rem 2.5rem 2.5rem;
+      box-shadow: 0 20px 30px rgba(0,0,0,0.7), inset 0 0 0 2px #5f6a9e;
+    }
+
+    canvas {
+      display: block;
+      margin: 0 auto;
+      width: 720px;
+      height: 400px;
+      border-radius: 2.2rem;
+      background: #12162c;
+      box-shadow: inset 0 0 30px #050816, 0 12px 16px -4px black;
+      cursor: pointer;
+      image-rendering: crisp-edges;
+    }
+
+    .ui-panel {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 20px 12px 0 12px;
+      color: #e9edff;
+      text-shadow: 0 2px 0 #0a0d1a;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .score-box {
+      background: #1b203b;
+      padding: 8px 24px;
+      border-radius: 60px;
+      border-bottom: 4px solid #6d7bc7;
+      font-size: 1.4rem;
+      box-shadow: inset 0 2px 5px #050816;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: #1b203b;
+      padding: 6px 20px 6px 18px;
+      border-radius: 60px;
+      border-bottom: 4px solid #6d7bc7;
+    }
+
+    .key-hint {
+      background: #2d3357;
+      padding: 4px 12px;
+      border-radius: 30px;
+      font-size: 1.1rem;
+      color: #bcc6ff;
+      border: 1px solid #58639e;
+      letter-spacing: 1px;
+    }
+
+    .restart-btn {
+      background: #3d4580;
+      border: none;
+      color: white;
+      font-weight: bold;
+      font-size: 1.2rem;
+      padding: 4px 18px;
+      border-radius: 40px;
+      cursor: pointer;
+      box-shadow: 0 6px 0 #1b1f3d, 0 3px 10px black;
+      transition: 0.05s linear;
+      border-bottom: 2px solid #7b89d4;
+    }
+
+    .restart-btn:active {
+      transform: translateY(5px);
+      box-shadow: 0 1px 0 #1b1f3d;
+    }
+
+    .restart-btn:hover {
+      background: #535fa3;
+    }
+
+    .status-msg {
+      background: #21263f;
+      padding: 6px 24px;
+      border-radius: 60px;
+      font-size: 1.1rem;
+      border-left: 4px solid #f5c542;
+      border-right: 4px solid #f5c542;
+      min-width: 120px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div class="game-wrapper">
+  <canvas id="gameCanvas" width="720" height="400"></canvas>
+
+  <div class="ui-panel">
+    <div class="score-box">🎵 <span id="scoreDisplay">0</span></div>
+    <div class="status-msg" id="statusMessage">▶ READY</div>
+    <div class="controls">
+      <span class="key-hint">Q W O P</span>
+      <button class="restart-btn" id="restartButton">⟳</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ----- canvas & context -----
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreSpan = document.getElementById('scoreDisplay');
+    const statusMsg = document.getElementById('statusMessage');
+
+    // ----- constants -----
+    const LANE_COUNT = 4;
+    const LANE_WIDTH = 80;
+    const LANE_GAP = 12;
+    const TOTAL_LANES_WIDTH = LANE_COUNT * (LANE_WIDTH + LANE_GAP) - LANE_GAP;
+    const START_X = (canvas.width - TOTAL_LANES_WIDTH) / 2;
+    const RECEIVER_Y = 290;        
+    const ARROW_SPEED = 3.2;       
+    const NOTE_GENERATION_INTERVAL = 32; 
+
+    // keybinds: Q W O P
+    const LANE_KEY = ['q', 'w', 'o', 'p'];    
+    const ARROW_SYMBOLS = ['▲', '▼', '◀', '▶'];
+    const LANE_COLORS = ['#ff6b8a', '#6bc8ff', '#ffb347', '#7bed9f']; // pink, blue, orange, green
+
+    // ----- game state -----
+    let score = 0;
+    let notes = [];                
+    let gameActive = true;        
+    let frameCounter = 0;
+    let comboCount = 0;
+
+    // --- VISUAL FEEDBACK STATE ---
+    let hitEffect = {
+      active: false,
+      lane: -1,
+      type: '', // 'sick', 'good', 'miss'
+      timer: 0,
+      maxTimer: 18, // frames
+    };
+
+    // lane flash (for misses / hits)
+    let laneFlash = {
+      active: false,
+      lane: -1,
+      color: '',
+      timer: 0,
+      maxTimer: 12,
+    };
+
+    // input tracking
+    const keysPressed = { q: false, w: false, o: false, p: false };
+
+    // ----- helper functions -----
+    function getLaneX(laneIndex) {
+      return START_X + laneIndex * (LANE_WIDTH + LANE_GAP);
+    }
+
+    function spawnNote() {
+      if (!gameActive) return;
+      let lane;
+      if (notes.length > 0) {
+        const lastLane = notes[notes.length - 1].lane;
+        let candidates = [0, 1, 2, 3].filter(l => l !== lastLane);
+        if (candidates.length === 0) candidates = [0, 1, 2, 3];
+        lane = candidates[Math.floor(Math.random() * candidates.length)];
+      } else {
+        lane = Math.floor(Math.random() * LANE_COUNT);
+      }
+      notes.push({ lane, y: -20, active: true });
+    }
+
+    function findClosestNote(lane) {
+      let closest = null;
+      let closestDist = Infinity;
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i];
+        if (!n.active) continue;
+        if (n.lane !== lane) continue;
+        const dist = Math.abs(n.y - RECEIVER_Y);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = n;
+        }
+      }
+      return closest;
+    }
+
+    // ----- trigger visual feedback -----
+    function triggerHitFeedback(lane, type) {
+      hitEffect.active = true;
+      hitEffect.lane = lane;
+      hitEffect.type = type;
+      hitEffect.timer = hitEffect.maxTimer;
+
+      // also flash the lane
+      laneFlash.active = true;
+      laneFlash.lane = lane;
+      laneFlash.timer = laneFlash.maxTimer;
+      if (type === 'sick') laneFlash.color = '#ffd93d';
+      else if (type === 'good') laneFlash.color = '#6bcfff';
+      else if (type === 'miss') laneFlash.color = '#ff4757';
+    }
+
+    function handleLaneHit(lane) {
+      if (!gameActive) {
+        statusMsg.innerText = '⏸ GAME OVER';
+        return false;
+      }
+
+      const note = findClosestNote(lane);
+      if (!note) {
+        comboCount = 0;
+        statusMsg.innerText = '❌ MISS';
+        triggerHitFeedback(lane, 'miss');
+        return false;
+      }
+
+      const dist = Math.abs(note.y - RECEIVER_Y);
+      const threshold = 28;
+
+      if (dist <= threshold) {
+        note.active = false;
+        const bonus = (dist < 12) ? 2 : 1;
+        score += 10 * bonus;
+        comboCount += 1;
+        const type = (bonus === 2) ? 'sick' : 'good';
+        statusMsg.innerText = (bonus === 2) ? '✨ SICK!' : '👍 GOOD';
+        scoreSpan.innerText = score;
+        triggerHitFeedback(lane, type);
+        return true;
+      } else {
+        comboCount = 0;
+        statusMsg.innerText = '💢 MISS';
+        triggerHitFeedback(lane, 'miss');
+        return false;
+      }
+    }
+
+    // ----- restart -----
+    function restartGame() {
+      notes = [];
+      score = 0;
+      comboCount = 0;
+      gameActive = true;
+      frameCounter = 0;
+      scoreSpan.innerText = '0';
+      statusMsg.innerText = '▶ READY';
+      hitEffect.active = false;
+      laneFlash.active = false;
+      for (let k in keysPressed) keysPressed[k] = false;
+    }
+
+    // ----- update -----
+    function update() {
+      if (!gameActive) return;
+
+      frameCounter++;
+      if (frameCounter % NOTE_GENERATION_INTERVAL === 0) {
+        spawnNote();
+        if (Math.random() < 0.25 && gameActive) spawnNote();
+      }
+
+      for (let i = notes.length - 1; i >= 0; i--) {
+        const n = notes[i];
+        if (!n.active) {
+          notes.splice(i, 1);
+          continue;
+        }
+        n.y += ARROW_SPEED;
+        if (n.y > RECEIVER_Y + 35) {
+          n.active = false;
+          comboCount = 0;
+          statusMsg.innerText = '💢 MISS';
+          triggerHitFeedback(n.lane, 'miss');
+          notes.splice(i, 1);
+        }
+      }
+
+      if (notes.length > 60) {
+        notes = notes.filter(n => n.active && n.y < canvas.height + 30);
+      }
+
+      // update feedback timers
+      if (hitEffect.active) {
+        hitEffect.timer--;
+        if (hitEffect.timer <= 0) hitEffect.active = false;
+      }
+      if (laneFlash.active) {
+        laneFlash.timer--;
+        if (laneFlash.timer <= 0) laneFlash.active = false;
+      }
+    }
+
+    // ----- draw (with enhanced visualizer) -----
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // background
+      const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      grad.addColorStop(0, '#141a30');
+      grad.addColorStop(0.7, '#1b2240');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // ---- draw lanes ----
+      for (let i = 0; i < LANE_COUNT; i++) {
+        const x = getLaneX(i);
+        const isFlashing = laneFlash.active && laneFlash.lane === i;
+        
+        // lane background
+        let fillColor = 'rgba(30, 40, 80, 0.5)';
+        if (isFlashing) {
+          const alpha = 0.4 + 0.4 * (laneFlash.timer / laneFlash.maxTimer);
+          fillColor = laneFlash.color + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+        }
+        ctx.shadowColor = '#6f7ecf';
+        ctx.shadowBlur = isFlashing ? 20 : 6;
+        ctx.fillStyle = fillColor;
+        ctx.beginPath();
+        ctx.roundRect(x, 70, LANE_WIDTH, 260, 12);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // lane border
+        ctx.strokeStyle = isFlashing ? laneFlash.color : '#5a68b0';
+        ctx.lineWidth = isFlashing ? 4 : 2;
+        ctx.beginPath();
+        ctx.roundRect(x, 70, LANE_WIDTH, 260, 12);
+        ctx.stroke();
+
+        // lane arrow indicator (bottom)
+        ctx.fillStyle = '#abb8ff';
+        ctx.font = 'bold 28px "Segoe UI", "Arial Unicode MS", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ARROW_SYMBOLS[i], x + LANE_WIDTH/2, RECEIVER_Y + 20);
+      }
+
+      // ---- draw "receiver" line ----
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = '#b1c2ff';
+      ctx.beginPath();
+      ctx.moveTo(START_X - 10, RECEIVER_Y);
+      ctx.lineTo(START_X + TOTAL_LANES_WIDTH + 10, RECEIVER_Y);
+      ctx.strokeStyle = '#eef3ff';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 10]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.shadowBlur = 0;
+
+      // ---- draw notes (arrows) ----
+      for (const note of notes) {
+        if (!note.active) continue;
+        const x = getLaneX(note.lane) + LANE_WIDTH/2;
+        const y = note.y;
+
+        // glow based on proximity to receiver
+        const distToReceiver = Math.abs(note.y - RECEIVER_Y);
+        const glowIntensity = Math.max(0, 1 - distToReceiver / 60);
+        ctx.shadowColor = '#b7cbff';
+        ctx.shadowBlur = 10 + 20 * glowIntensity;
+
+        // main arrow
+        ctx.fillStyle = '#f2f7ff';
+        ctx.font = 'bold 40px "Segoe UI", "Arial Unicode MS", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ARROW_SYMBOLS[note.lane], x, y);
+
+        // accent
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#dbe2ff';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillText(ARROW_SYMBOLS[note.lane], x-2, y-2);
+        ctx.shadowBlur = 0;
+      }
+
+      // ---- draw HIT EFFECT (big text on lane) ----
+      if (hitEffect.active) {
+        const x = getLaneX(hitEffect.lane) + LANE_WIDTH/2;
+        const y = RECEIVER_Y - 40 - (hitEffect.maxTimer - hitEffect.timer) * 2; // float up
+        
+        const alpha = hitEffect.timer / hitEffect.maxTimer;
+        ctx.globalAlpha = alpha;
+        
+        let text = '';
+        let color = '';
+        let size = 48;
+        if (hitEffect.type === 'sick') {
+          text = '✨ SICK!';
+          color = '#ffd93d';
+          size = 52;
+        } else if (hitEffect.type === 'good') {
+          text = '👍 GOOD';
+          color = '#6bcfff';
+          size = 44;
+        } else if (hitEffect.type === 'miss') {
+          text = '💢 MISS';
+          color = '#ff4757';
+          size = 44;
+        }
+        
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 30;
+        ctx.fillStyle = color;
+        ctx.font = `bold ${size}px "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x, y);
+        
+        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 0;
+      }
+
+      // ---- combo display ----
+      if (comboCount > 2) {
+        ctx.fillStyle = '#fbe98a';
+        ctx.font = 'bold 22px "Segoe UI"';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.shadowColor = '#00000080';
+        ctx.shadowBlur = 12;
+        ctx.fillText(`⚡ ${comboCount} COMBO`, canvas.width-30, 20);
+        ctx.shadowBlur = 0;
+      }
+
+      // ---- game over overlay ----
+      if (!gameActive) {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ffd966';
+        ctx.font = 'bold 44px "Segoe UI"';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = '#000000';
+        ctx.shadowBlur = 20;
+        ctx.fillText('⏸ GAME OVER', canvas.width/2, canvas.height/2 - 20);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#bcc6ff';
+        ctx.font = '20px sans-serif';
+        ctx.fillText('press ⟳ to restart', canvas.width/2, canvas.height/2 + 40);
+      }
+
+      ctx.shadowBlur = 0;
+    }
+
+    // roundRect polyfill
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+      CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+        if (r > w/2) r = w/2;
+        if (r > h/2) r = h/2;
+        this.moveTo(x + r, y);
+        this.lineTo(x + w - r, y);
+        this.quadraticCurveTo(x + w, y, x + w, y + r);
+        this.lineTo(x + w, y + h - r);
+        this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        this.lineTo(x + r, y + h);
+        this.quadraticCurveTo(x, y + h, x, y + h - r);
+        this.lineTo(x, y + r);
+        this.quadraticCurveTo(x, y, x + r, y);
+        this.closePath();
+        return this;
+      };
+    }
+
+    // ----- game loop -----
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // ----- event listeners -----
+    function onKeyDown(e) {
+      const key = e.key.toLowerCase();
+      if (LANE_KEY.includes(key)) {
+        e.preventDefault();
+        if (!keysPressed[key]) {
+          keysPressed[key] = true;
+          const lane = LANE_KEY.indexOf(key);
+          handleLaneHit(lane);
+        }
+      }
+    }
+
+    function onKeyUp(e) {
+      const key = e.key.toLowerCase();
+      if (LANE_KEY.includes(key)) {
+        e.preventDefault();
+        keysPressed[key] = false;
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+
+    document.getElementById('restartButton').addEventListener('click', () => {
+      restartGame();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (LANE_KEY.includes(e.key.toLowerCase())) e.preventDefault();
+    }, { passive: false });
+
+    // ----- start -----
+    restartGame();
+    gameLoop();
+
+    window.addEventListener('unload', () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    });
+
+  })();
+</script>
+</body>
+</html>
